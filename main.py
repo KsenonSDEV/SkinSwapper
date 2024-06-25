@@ -80,7 +80,7 @@ class Label:
 
         # Position version number
         label2_x = 950 - label1_width - 20
-        label2 = CTkLabel(self.parent, text="Version 1.1", font=font, text_color=text_color)
+        label2 = CTkLabel(self.parent, text="Version 1.2", font=font, text_color=text_color)
         label2.place(x=label2_x, y=7)  # Position top right
 
         # Horizontal separator line
@@ -94,12 +94,6 @@ class Label:
         separator_vertical.place(x=520, y=47)
 
 Label = Label(main)
-
-def shorten_folder_name(folder_name):
-        parts = folder_name.split('_')
-        if len(parts) > 3:
-            parts = parts[-3:]  # Keep only the last 3 segments
-        return '_'.join(parts)
 
 # Buttons class
 class Buttons:
@@ -309,9 +303,6 @@ class Buttons:
         try:
             skin_folders = [f for f in os.listdir(wt_path) if os.path.isdir(os.path.join(wt_path, f))]
             self.listbox3.delete(0, tk.END)
-            for folder in skin_folders:
-                shortened_name = shorten_folder_name(folder)
-                self.listbox3.insert(tk.END, shortened_name)
             self.message_label.configure(text="Skin folders loaded.", text_color="#00ff00")
         except Exception as e:
             self.message_label.configure(text=f"Error loading skin folders: {e}", text_color="#ff0000")
@@ -347,60 +338,79 @@ class Buttons:
             self.message_label.configure(text=f"Error saving current files: {e}", text_color="#ff0000")
 
     def apply_new(self):
-        selected_skin_index = self.listbox3.curselection()
-        selected_zip_index = self.listbox.curselection()
+            selected_zip = self.listbox.get(tk.ACTIVE)
+            if not selected_zip:
+                self.message_label.configure(text="No zip file selected.", text_color="#ff0000")
+                return
 
-        if not selected_skin_index:
-            self.message_label.configure(text="Please select a skin folder from the list.", text_color="#ff0000")
-            return
+            selected_skin_index = self.listbox3.curselection()
+            if not selected_skin_index:
+                self.message_label.configure(text="Please select a skin folder from the list.", text_color="#ff0000")
+                return
 
-        folder_name = self.listbox3.get(selected_skin_index)
-        folder_path = os.path.join(self.wt_loc.get(), folder_name)
+            folder_name = self.listbox3.get(selected_skin_index)
+            skin_path = os.path.join(self.wt_loc.get(), folder_name)
 
-        if not selected_zip_index:
-            self.message_label.configure(text="Please select a zip file from the list.", text_color="#ff0000")
-            return
+            zip_path = self.zip_loc.get().strip()
+            selected_zip_path = os.path.join(zip_path, selected_zip)
+            if not os.path.isfile(selected_zip_path):
+                self.message_label.configure(text="Invalid selected zip file.", text_color="#ff0000")
+                return
 
-        zip_file_name = self.listbox.get(selected_zip_index)
-        zip_file_path = os.path.join(self.zip_loc.get().strip(), zip_file_name)
+            if not os.path.isdir(skin_path):
+                self.message_label.configure(text="Invalid UserSkins path.", text_color="#ff0000")
+                return
 
-        if not os.path.exists(folder_path):
-            self.message_label.configure(text=f"The folder '{folder_path}' does not exist.", text_color="#ff0000")
-            return
+            try:
+                # Extract the zip file to a temporary directory
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with zipfile.ZipFile(selected_zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(tmpdir)
 
-        self.message_label.configure(text=f"Attempting to extract '{zip_file_name}' to '{folder_path}'.")
+                    extracted_items = os.listdir(tmpdir)
 
-        try:
-            # Clear the folder before extracting
-            for item in os.listdir(folder_path):
-                item_path = os.path.join(folder_path, item)
-                if os.path.isdir(item_path):
-                    shutil.rmtree(item_path)
-                else:
-                    os.remove(item_path)
+                    # Check for single folder inside the zip
+                    if len(extracted_items) == 1 and os.path.isdir(os.path.join(tmpdir, extracted_items[0])):
+                        folder_path = os.path.join(tmpdir, extracted_items[0])
+                        for item in os.listdir(folder_path):
+                            s = os.path.join(folder_path, item)
+                            d = os.path.join(skin_path, item)
+                            if os.path.isdir(s):
+                                shutil.copytree(s, d, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(s, d)
+                        self.message_label.configure(text=f"Skin {selected_zip} applied successfully.", text_color="#00ff00")
+                        return
 
-            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    zip_ref.extractall(temp_dir)
-                    
-                    extracted_items = os.listdir(temp_dir)
-                    if len(extracted_items) != 1 or not os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
-                        raise Exception("Zip file must contain exactly one folder")
+                    # Check if all extracted items are files
+                    elif all(os.path.isfile(os.path.join(tmpdir, item)) for item in extracted_items):
+                        for item in extracted_items:
+                            s = os.path.join(tmpdir, item)
+                            d = os.path.join(skin_path, item)
+                            shutil.copy2(s, d)
+                        self.message_label.configure(text=f"Skin {selected_zip} applied successfully.", text_color="#00ff00")
+                        return
 
-                    extracted_folder = os.path.join(temp_dir, extracted_items[0])
+                    # Check for multiple folders inside the zip
+                    else:
+                        folders_count = sum(os.path.isdir(os.path.join(tmpdir, item)) for item in extracted_items)
+                        if folders_count > 1:
+                            self.message_label.configure(text="Error: Zip file contains multiple folders.", text_color="#ff0000")
+                            return
 
-                     # Move contents from the extracted folder to the target folder
-                    for item in os.listdir(extracted_folder):
-                        source_item = os.path.join(extracted_folder, item)
-                        destination_item = os.path.join(folder_path, item)
-                        if os.path.isdir(source_item):
-                            shutil.copytree(source_item, destination_item)
-                        else:
-                            shutil.copy2(source_item, destination_item)
+                        self.message_label.configure(text="Error: Invalid zip file structure.", text_color="#ff0000")
+                        return
 
-            self.message_label.configure(text=f"Files from '{zip_file_name}' extracted to '{folder_path}' successfully!", text_color="#00ff00")
-        except Exception as e:
-            self.message_label.configure(text=f"Error extracting files: {e}", text_color="#ff0000")
+                # Delete the existing files only after ensuring successful extraction
+                for item in os.listdir(skin_path):
+                    item_path = os.path.join(skin_path, item)
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                    else:
+                        os.remove(item_path)
+
+            except Exception as e:
+                self.message_label.configure(text=f"Error applying new skin: {e}", text_color="#ff0000")
 
     def reverse_changes(self):
         selected_skin_index = self.listbox3.curselection()
@@ -468,7 +478,7 @@ class Buttons:
             return
 
         try:
-            skin_folders = [f for f in os.listdir(wt_path) if os.path.isdir(os.path.join(wt_path, f))]
+            skin_folders = [f for f in os.listdir(wt_path) if os.path.isdir(os.path.join(wt_path, f)) and not f.endswith('_backup') and '_backup' not in f]
             self.listbox3.delete(0, tk.END)
             for folder in skin_folders:
                 self.listbox3.insert(tk.END, folder)
@@ -483,7 +493,7 @@ class Buttons:
             return
 
         try:
-            saved_files = [f for f in os.listdir(backup_path) if os.path.isdir(os.path.join(backup_path, f))]
+            saved_files = [f for f in os.listdir(backup_path) if os.path.isdir(os.path.join(backup_path, f)) and f.endswith('_backup') or '_backup_' in f]
             self.listbox2.delete(0, tk.END)
             for file in saved_files:
                 self.listbox2.insert(tk.END, file)
